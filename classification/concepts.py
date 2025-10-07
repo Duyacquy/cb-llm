@@ -1,4 +1,4 @@
-sst2_noise = [
+sst2 = [
     "Flarn wobblen zix dral.", "Miptar lensho grut feeb.", "Caldron wibber snet nof.",
     "Brindle fex troven marp.", "Lorken stiv ulpex drat.", "Nuphar quex tilban flox.",
     "Frindle motz urbin zall.", "Klemp droven gart snib.", "Raffin tolk blin wesh.",
