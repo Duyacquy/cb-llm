@@ -27,63 +27,94 @@ def extract_weights_from_path_item(item, fallback_linear):
     W = item.get("weight", None) if isinstance(item, dict) else None
     b = item.get("bias", None) if isinstance(item, dict) else None
     if W is None or b is None:
-        # fall back to the model's current params
         W = fallback_linear.weight.detach().cpu()
         b = fallback_linear.bias.detach().cpu()
     return W, b
 
 def test_accuracy(W, b, feats, y_true):
-    # feats: [N, C], W: [num_labels, C], b: [num_labels]
     logits = feats @ W.T + b
     pred = torch.argmax(logits, dim=-1)
-    acc = (pred == y_true).float().mean().item()
-    return acc
+    return (pred == y_true).float().mean().item()
+
+def stratified_split_indices(y_np, val_ratio=0.1, seed=42):
+    rng = np.random.default_rng(seed)
+    y_np = np.asarray(y_np)
+    idx = np.arange(len(y_np))
+    train_idx, val_idx = [], []
+    for cls in np.unique(y_np):
+        cls_idx = idx[y_np == cls]
+        rng.shuffle(cls_idx)
+        n_val = max(1, int(round(len(cls_idx) * val_ratio)))
+        val_idx.append(cls_idx[:n_val])
+        train_idx.append(cls_idx[n_val:])
+    train_idx = np.concatenate(train_idx)
+    val_idx = np.concatenate(val_idx)
+    # shuffle order for loaders
+    rng.shuffle(train_idx); rng.shuffle(val_idx)
+    return train_idx, val_idx
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--train_npy", type=str, required=True, help="ACC features for train")
-    parser.add_argument("--val_npy", type=str, default=None, help="ACC features for val (optional)")
+    parser.add_argument("--train_npy", type=str, required=True, help="ACC features for FULL train")
+    parser.add_argument("--val_npy", type=str, default=None, help="ACC features for val (optional). If absent, we split train.")
     parser.add_argument("--test_npy", type=str, required=True, help="ACS features for test (NO ACC)")
     parser.add_argument("--dataset", type=str, default="SetFit/sst2")
     parser.add_argument("--saga_epoch", type=int, default=500)
     parser.add_argument("--saga_batch_size", type=int, default=256)
-    parser.add_argument("--save_prefix", type=str, default=None, help="If set, save W_g and b_g to this prefix")
+    parser.add_argument("--save_prefix", type=str, default=None, help="If set, save W_g/b_g and normalization")
+    parser.add_argument("--val_ratio", type=float, default=0.1, help="Used only when --val_npy is absent")
+    parser.add_argument("--seed", type=int, default=42, help="Random seed for stratified split")
     args = parser.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     dataset_name = args.dataset
 
-    # --- Load concept features ---
-    # Train/Val: ACC; Test: ACS (no ACC)
-    train_c = load_npy(args.train_npy)
-    val_c = load_npy(args.val_npy) if args.val_npy else None
-    test_c = load_npy(args.test_npy)
-
-    # --- Normalize like train_FL.py (fit on TRAIN only), then ReLU ---
-    train_mean = train_c.mean(0)
-    train_std  = train_c.std(0)
-    train_c = normalize_relu(train_c, train_mean, train_std)
-    if val_c is not None:
-        val_c = normalize_relu(val_c, train_mean, train_std)
-    test_c = normalize_relu(test_c, train_mean, train_std)
-
-    # --- Load labels (HF datasets) ---
+    # --- Load HF labels (train/test) ---
     train_ds = load_dataset(dataset_name, split="train")
-    train_y = torch.LongTensor(train_ds["label"])
-    if val_c is not None:
-        val_ds = load_dataset(dataset_name, split="validation")
-        val_y = torch.LongTensor(val_ds["label"])
+    y_train_full = np.array(train_ds["label"])
     test_ds = load_dataset(dataset_name, split="test")
     test_y = torch.LongTensor(test_ds["label"])
 
-    # --- Dataloaders for GLM-SAGA ---
+    # --- Load features ---
+    train_full_c = load_npy(args.train_npy)   # ACC on FULL train
+    test_c = load_npy(args.test_npy)          # ACS test (no ACC)
+
+    # --- Prepare val ---
+    if args.val_npy is not None:
+        # Use provided ACC val
+        val_c = load_npy(args.val_npy)
+        # When explicit val is provided, we also load its labels from HF 'validation' split
+        # Only valid for datasets that have validation; else user should provide split via --val_npy + matching labels (not supported here).
+        val_ds = load_dataset(dataset_name, split="validation")
+        val_y = torch.LongTensor(val_ds["label"])
+
+        # No split on train; use full train as train
+        train_idx = np.arange(len(train_full_c))
+        train_c = train_full_c
+        train_y = torch.LongTensor(y_train_full)
+
+    else:
+        # Stratified split on FULL train
+        train_idx, val_idx = stratified_split_indices(y_train_full, val_ratio=args.val_ratio, seed=args.seed)
+        train_c = train_full_c[train_idx]
+        val_c   = train_full_c[val_idx]
+        train_y = torch.LongTensor(y_train_full[train_idx])
+        val_y   = torch.LongTensor(y_train_full[val_idx])
+
+    # --- Normalize using TRAIN split only, then ReLU ---
+    train_mean = train_c.mean(0)
+    train_std  = train_c.std(0)
+    train_c = normalize_relu(train_c, train_mean, train_std)
+    val_c   = normalize_relu(val_c,   train_mean, train_std)
+    test_c  = normalize_relu(test_c,  train_mean, train_std)
+
+    # --- Dataloaders ---
     indexed_train_ds = IndexedTensorDataset(train_c, train_y)
     indexed_train_loader = DataLoader(indexed_train_ds, batch_size=args.saga_batch_size, shuffle=True)
-    if val_c is not None:
-        val_loader = DataLoader(TensorDataset(val_c, val_y), batch_size=args.saga_batch_size, shuffle=False)
+    val_loader  = DataLoader(TensorDataset(val_c, val_y), batch_size=args.saga_batch_size, shuffle=False)
     test_loader = DataLoader(TensorDataset(test_c, test_y), batch_size=args.saga_batch_size, shuffle=False)
 
-    # --- Final linear classifier ---
+    # --- Linear head ---
     print("dim of concept features: ", train_c.shape[1])
     linear = torch.nn.Linear(train_c.shape[1], CFG.class_num[dataset_name])
     linear.weight.data.zero_()
@@ -91,37 +122,23 @@ if __name__ == "__main__":
 
     STEP_SIZE = 0.05
     ALPHA = 0.99
-    metadata = {"max_reg": {"nongrouped": 0.0007}}
-
     print("training final layer from ACC(train[/val]) and evaluating on ACS(test)...")
-    if val_c is not None:
-        output_proj = glm_saga(
-            linear, indexed_train_loader, STEP_SIZE, args.saga_epoch, ALPHA, k=10,
-            val_loader=val_loader, test_loader=test_loader, do_zero=True,
-            n_classes=CFG.class_num[dataset_name]
-        )
-    else:
-        output_proj = glm_saga(
-            linear, indexed_train_loader, STEP_SIZE, args.saga_epoch, ALPHA, k=10,
-            test_loader=test_loader, do_zero=True,
-            n_classes=CFG.class_num[dataset_name]
-        )
-
+    output_proj = glm_saga(
+        linear, indexed_train_loader, STEP_SIZE, args.saga_epoch, ALPHA, k=10,
+        val_loader=val_loader, test_loader=test_loader, do_zero=True,
+        n_classes=CFG.class_num[dataset_name]
+    )
     print("training done.")
 
-    # --- Extract weights (prefer from solver's path; else fall back to model) ---
+    # --- Extract weights & evaluate ---
     last_item = pick_last_path_item(output_proj)
     W_g, b_g = extract_weights_from_path_item(last_item, linear)
 
-    # --- Compute test accuracy ourselves (robust to solver's optional metrics) ---
-    acc = test_accuracy(W_g, b_g, test_c, test_y)
-    print(f"Test accuracy (ACS test via trained FL): {acc:.4f}")
-
-    # Also print solver-reported acc if available
+    acc_test = test_accuracy(W_g, b_g, test_c, test_y)
+    print(f"Test accuracy (ACS test via trained FL): {acc_test:.4f}")
     if last_item and "metrics" in last_item and "acc_test" in last_item["metrics"]:
         print(f"Test accuracy (glm_saga reported): {last_item['metrics']['acc_test']:.4f}")
 
-    # --- Optional save ---
     if args.save_prefix:
         os.makedirs(os.path.dirname(args.save_prefix), exist_ok=True)
         torch.save(W_g, args.save_prefix + "_W_g.pt")
