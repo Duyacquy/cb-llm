@@ -49,9 +49,11 @@ print("loading data...")
 train_dataset = load_dataset(args.dataset, split='train')
 if args.dataset == 'SetFit/sst2':
     val_dataset = load_dataset(args.dataset, split='validation')
+test_dataset = load_dataset(args.dataset, split='test')
 print("training data len: ", len(train_dataset))
 if args.dataset == 'SetFit/sst2':
     print("val data len: ", len(val_dataset))
+print("test data len: ", len(test_dataset))
 
 
 concept_set = CFG.concept_set[args.dataset]
@@ -77,6 +79,7 @@ elif args.concept_text_sim_model == 'angle':
     train_dataset = train_dataset.map(decorate_dataset, fn_kwargs={"d": args.dataset})
     if args.dataset == 'SetFit/sst2':
         val_dataset = val_dataset.map(decorate_dataset, fn_kwargs={"d": args.dataset})
+    test_dataset = test_dataset.map(decorate_dataset, fn_kwargs={"d": args.dataset})
     concept_set = decorate_concepts(concept_set)
 else:
     raise Exception("concept-text sim model should be mpnet, simcse or angle")
@@ -104,11 +107,23 @@ if args.dataset == 'SetFit/sst2':
         encoded_sim_val_dataset = encoded_sim_val_dataset.remove_columns(['title'])
     encoded_sim_val_dataset = encoded_sim_val_dataset[:len(encoded_sim_val_dataset)]
 
+encoded_sim_test_dataset = test_dataset.map(
+    lambda e: tokenizer_sim(e[CFG.example_name[args.dataset]], padding=True, truncation=True,
+                            max_length=args.max_length), batched=True,
+    batch_size=len(test_dataset))
+encoded_sim_test_dataset = encoded_sim_test_dataset.remove_columns([CFG.example_name[args.dataset]])
+if args.dataset == 'SetFit/sst2':
+    encoded_sim_test_dataset = encoded_sim_test_dataset.remove_columns(['label_text'])
+if args.dataset == 'dbpedia_14':
+    encoded_sim_test_dataset = encoded_sim_test_dataset.remove_columns(['title'])
+encoded_sim_test_dataset = encoded_sim_test_dataset[:len(encoded_sim_test_dataset)]
+
 encoded_c = tokenizer_sim(concept_set, padding=True, truncation=True, max_length=args.max_length)
 
 train_sim_loader = build_sim_loaders(encoded_sim_train_dataset)
 if args.dataset == 'SetFit/sst2':
     val_sim_loader = build_sim_loaders(encoded_sim_val_dataset)
+test_sim_loader = build_sim_loaders(encoded_sim_test_dataset)
 
 print("getting concept labels...")
 encoded_c = {k: torch.tensor(v).to(device) for k, v in encoded_c.items()}
@@ -163,6 +178,26 @@ if args.dataset == 'SetFit/sst2':
         val_sim.append(text_features @ concept_features.T)
     val_similarity = torch.cat(val_sim, dim=0).cpu().detach().numpy()
 
+test_sim = []
+for i, batch_sim in enumerate(test_sim_loader):
+    print("test batch ", str(i), end="\r")
+    batch_sim = {k: v.to(device) for k, v in batch_sim.items()}
+    with torch.no_grad():
+        if args.concept_text_sim_model == 'mpnet':
+            text_features = sim_model(input_ids=batch_sim["input_ids"], attention_mask=batch_sim["attention_mask"])
+            text_features = mean_pooling(text_features, batch_sim["attention_mask"])
+        elif args.concept_text_sim_model == 'simcse':
+            text_features = sim_model(input_ids=batch_sim["input_ids"], attention_mask=batch_sim["attention_mask"],
+                                      output_hidden_states=True, return_dict=True).pooler_output
+        elif args.concept_text_sim_model == 'angle':
+            text_features = sim_model(output_hidden_states=True, input_ids=batch_sim["input_ids"],
+                                      attention_mask=batch_sim["attention_mask"]).hidden_states[-1][:, -1].float()
+        else:
+            raise Exception("concept-text sim model should be mpnet, simcse or angle")
+        text_features = F.normalize(text_features, p=2, dim=1)
+    test_sim.append(text_features @ concept_features.T)
+test_similarity = torch.cat(test_sim, dim=0).cpu().detach().numpy()
+
 d_name = args.dataset.replace('/', '_')
 prefix = "./"
 if args.concept_text_sim_model == 'mpnet':
@@ -180,3 +215,4 @@ if not os.path.exists(prefix):
 np.save(prefix + "concept_labels_train.npy", train_similarity)
 if args.dataset == 'SetFit/sst2':
     np.save(prefix + "concept_labels_val.npy", val_similarity)
+np.save(prefix + "concept_labels_test.npy", test_similarity)
