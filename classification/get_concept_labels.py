@@ -142,7 +142,6 @@ with torch.no_grad():
 start = time.time()
 train_sim = []
 for i, batch_sim in enumerate(train_sim_loader):
-    print("batch ", str(i), end="\r")
     batch_sim = {k: v.to(device) for k, v in batch_sim.items()}
     with torch.no_grad():
         if args.concept_text_sim_model == 'mpnet':
@@ -180,7 +179,6 @@ if args.dataset == 'SetFit/sst2':
 
 test_sim = []
 for i, batch_sim in enumerate(test_sim_loader):
-    print("test batch ", str(i), end="\r")
     batch_sim = {k: v.to(device) for k, v in batch_sim.items()}
     with torch.no_grad():
         if args.concept_text_sim_model == 'mpnet':
