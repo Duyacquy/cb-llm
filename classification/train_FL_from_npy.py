@@ -56,18 +56,20 @@ def stratified_split_indices(y_np, val_ratio=0.1, seed=42):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--train_npy", type=str, required=True, help="ACS features for FULL train")
-    parser.add_argument("--test_npy", type=str, required=True, help="ACS features for test")
+    parser.add_argument("--val_npy", type=str, default=None)
     parser.add_argument("--test_npy", type=str, required=True, help="ACS features for test (NO ACC)")
     parser.add_argument("--dataset", type=str, default="SetFit/sst2")
     parser.add_argument("--saga_epoch", type=int, default=500)
     parser.add_argument("--saga_batch_size", type=int, default=256)
     parser.add_argument("--save_prefix", type=str, default=None, help="If set, save W_g/b_g and normalization")
-    parser.add_argument("--val_ratio", type=float, default=0.1, help="Used only when --val_npy is absent")
+    parser.add_argument("--val_ratio", type=float, default=0.2, help="Used only when --val_npy is absent")
     parser.add_argument("--seed", type=int, default=42, help="Random seed for stratified split")
     args = parser.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     dataset_name = args.dataset
+
+    print("--------------------TRAIN FL-------------------------")
 
     # --- Load HF labels (train/test) ---
     train_ds = load_dataset(dataset_name, split="train")
@@ -76,19 +78,16 @@ if __name__ == "__main__":
     test_y = torch.LongTensor(test_ds["label"])
 
     # --- Load features ---
-    train_full_c = load_npy(args.train_npy)   # ACC on FULL train
+    train_full_c = load_npy(args.train_npy)   # ACS on FULL train
     test_c = load_npy(args.test_npy)          # ACS test (no ACC)
-
+    
     # --- Prepare val ---
     if args.val_npy is not None:
-        # Use provided ACC val
         val_c = load_npy(args.val_npy)
-        # When explicit val is provided, we also load its labels from HF 'validation' split
-        # Only valid for datasets that have validation; else user should provide split via --val_npy + matching labels (not supported here).
+    
         val_ds = load_dataset(dataset_name, split="validation")
         val_y = torch.LongTensor(val_ds["label"])
 
-        # No split on train; use full train as train
         train_idx = np.arange(len(train_full_c))
         train_c = train_full_c
         train_y = torch.LongTensor(y_train_full)
