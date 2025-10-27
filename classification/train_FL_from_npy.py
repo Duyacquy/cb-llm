@@ -120,7 +120,7 @@ if __name__ == "__main__":
     parser.add_argument("--saga_batch_size", type=int, default=256)
     parser.add_argument("--save_prefix", type=str, default=None,
                         help="If set, save W_g/b_g and normalization prefix_path_*")
-    parser.add_argument("--val_ratio", type=float, default=0.1,
+    parser.add_argument("--val_ratio", type=float, default=0.2,
                         help="Used only when --val_npy is absent (stratify split from train_full)")
     parser.add_argument("--seed", type=int, default=42,
                         help="Random seed for stratified split")

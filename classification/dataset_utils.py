@@ -74,7 +74,7 @@ def preprocess_label_column(dataset, dataset_name, label_column):
     if dataset_name == "Duyacquy/Single_label_medical_abstract":
         dataset = dataset.map(reformat_label, batched=True)
 
-    elif dataset_name == "dd-n-kk/uci-drug-review-cleaned":
+    elif dataset_name == "Duyacquy/UCI_drug":
         # convert the rating to integers
         dataset = cast_type(dataset, label_column, "int32")
         dataset = dataset.map(reformat_label, batched=True)
