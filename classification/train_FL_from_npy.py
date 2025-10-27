@@ -55,8 +55,8 @@ def stratified_split_indices(y_np, val_ratio=0.1, seed=42):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--train_npy", type=str, required=True, help="ACC features for FULL train")
-    parser.add_argument("--val_npy", type=str, default=None, help="ACC features for val (optional). If absent, we split train.")
+    parser.add_argument("--train_npy", type=str, required=True, help="ACS features for FULL train")
+    parser.add_argument("--test_npy", type=str, required=True, help="ACS features for test")
     parser.add_argument("--test_npy", type=str, required=True, help="ACS features for test (NO ACC)")
     parser.add_argument("--dataset", type=str, default="SetFit/sst2")
     parser.add_argument("--saga_epoch", type=int, default=500)
@@ -122,7 +122,7 @@ if __name__ == "__main__":
 
     STEP_SIZE = 0.05
     ALPHA = 0.99
-    print("training final layer from ACC(train[/val]) and evaluating on ACS(test)...")
+    print("training final layer from ACS(train[/val]) and evaluating on ACS(test)...")
     output_proj = glm_saga(
         linear, indexed_train_loader, STEP_SIZE, args.saga_epoch, ALPHA, k=10,
         val_loader=val_loader, test_loader=test_loader, do_zero=True,
