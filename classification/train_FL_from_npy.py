@@ -36,6 +36,41 @@ def test_accuracy(W, b, feats, y_true):
     pred = torch.argmax(logits, dim=-1)
     return (pred == y_true).float().mean().item()
 
+def compute_metrics(pred, y_true, num_classes):
+    # pred, y_true: torch.LongTensor [N]
+    pred_np = pred.cpu().numpy()
+    y_np = y_true.cpu().numpy()
+
+    # confusion matrix counts per class
+    # tp[c], fp[c], fn[c]
+    tp = np.zeros(num_classes, dtype=np.int64)
+    fp = np.zeros(num_classes, dtype=np.int64)
+    fn = np.zeros(num_classes, dtype=np.int64)
+
+    for c in range(num_classes):
+        tp[c] = np.sum((pred_np == c) & (y_np == c))
+        fp[c] = np.sum((pred_np == c) & (y_np != c))
+        fn[c] = np.sum((pred_np != c) & (y_np == c))
+
+    # precision_c = tp / (tp+fp), recall_c = tp / (tp+fn)
+    # handle divide-by-zero -> 0
+    precision_c = np.divide(tp, tp + fp, out=np.zeros_like(tp, dtype=float), where=(tp+fp) != 0)
+    recall_c    = np.divide(tp, tp + fn, out=np.zeros_like(tp, dtype=float), where=(tp+fn) != 0)
+
+    # f1_c = 2 * p * r / (p+r)
+    f1_c = np.divide(
+        2 * precision_c * recall_c,
+        precision_c + recall_c,
+        out=np.zeros_like(precision_c, dtype=float),
+        where=(precision_c + recall_c) != 0
+    )
+
+    precision_macro = precision_c.mean()
+    recall_macro    = recall_c.mean()
+    f1_macro        = f1_c.mean()
+
+    return precision_macro, recall_macro, f1_macro
+
 def stratified_split_indices(y_np, val_ratio=0.1, seed=42):
     rng = np.random.default_rng(seed)
     y_np = np.asarray(y_np)
@@ -58,14 +93,11 @@ def load_and_normalize_labels(dataset_name, split):
     label_key = CFG.dataset_config[dataset_name]["label_column"]
     raw_y = ds[label_key]
 
-    # ép sang int nếu cần (ví dụ string -> id)
-    # nếu là string label thì map về chỉ số ổn định
     if isinstance(raw_y[0], str):
         uniq = sorted(list(set(raw_y)))
         table = {lab: i for i, lab in enumerate(uniq)}
         y_np = np.array([table[v] for v in raw_y], dtype=np.int64)
     else:
-        # giả sử là số rồi (có thể 1..K thay vì 0..K-1), ta shift về 0-based
         y_np = np.array(raw_y, dtype=np.int64)
         min_val = y_np.min()
         if min_val != 0:
@@ -101,17 +133,14 @@ if __name__ == "__main__":
 
     has_val = CFG.dataset_config[dataset_name].get("has_val", False) if "has_val" in CFG.dataset_config[dataset_name] else False
 
-    # nhãn train/test (đã chuẩn hoá về int 0..C-1)
     y_train_full = load_and_normalize_labels(dataset_name, split="train")
     y_test_full  = load_and_normalize_labels(dataset_name, split="test")
 
     test_y = torch.LongTensor(y_test_full)
 
-    # nạp đặc trưng ACS
-    train_full_c = load_npy(args.train_npy)  # FULL train ACS
-    test_c = load_npy(args.test_npy)         # test ACS
+    train_full_c = load_npy(args.train_npy)
+    test_c = load_npy(args.test_npy)
 
-    # chia val
     if args.val_npy is not None and has_val:
         val_c = load_npy(args.val_npy)
 
@@ -180,8 +209,22 @@ if __name__ == "__main__":
     last_item = pick_last_path_item(output_proj)
     W_g, b_g = extract_weights_from_path_item(last_item, linear)
 
-    acc_test = test_accuracy(W_g, b_g, test_c, test_y)
-    print(f"Test accuracy (ACS test via trained FL): {acc_test:.4f}")
+    # tính logits test và các metric
+    logits_test = test_c @ W_g.T + b_g
+    pred_test = torch.argmax(logits_test, dim=-1)
+
+    acc_test = (pred_test == test_y).float().mean().item()
+    precision_macro, recall_macro, f1_macro = compute_metrics(
+        pred_test,
+        test_y,
+        num_classes=CFG.class_num[dataset_name]
+    )
+
+    print(f"Test accuracy:  {acc_test:.4f}")
+    print(f"Test precision (macro): {precision_macro:.44f}")
+    print(f"Test recall    (macro): {recall_macro:.4f}")
+    print(f"Test f1        (macro): {f1_macro:.4f}")
+
     if last_item and "metrics" in last_item and "acc_test" in last_item["metrics"]:
         print(f"Test accuracy (glm_saga reported): {last_item['metrics']['acc_test']:.4f}")
 
