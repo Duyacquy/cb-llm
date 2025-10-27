@@ -7,6 +7,7 @@ from datasets import load_dataset
 from torch.utils.data import DataLoader, TensorDataset
 from glm_saga.elasticnet import IndexedTensorDataset, glm_saga
 import config as CFG
+from dataset_utils import preprocess
 
 def load_npy(path):
     arr = np.load(path)
@@ -90,6 +91,7 @@ def stratified_split_indices(y_np, val_ratio=0.1, seed=42):
 
 def load_and_normalize_labels(dataset_name, split):
     ds = load_dataset(dataset_name, split=split)
+    ds = preprocess(ds, args.dataset, CFG.dataset_config[args.dataset]["text_column"], CFG.dataset_config[args.dataset]["label_column"])
     label_key = CFG.dataset_config[dataset_name]["label_column"]
     raw_y = ds[label_key]
 
