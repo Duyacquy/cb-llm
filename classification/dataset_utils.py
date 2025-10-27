@@ -61,24 +61,24 @@ def preprocess(dataset, dataset_name, text_column, label_column):
 
 
 def preprocess_label_column(dataset, dataset_name, label_column):
+    df = dataset.to_pandas()
+    raw_labels = df[label_column].tolist()
 
-    def reformat_label(rows):
-        return {label_column: [label - 1 for label in rows[label_column]]}
+    first_label = raw_labels[0]
 
-    def cast_type(dataset, column_name, dtype):
-        new_features = dataset.features.copy()
-        new_features[column_name] = Value(dtype)
-        dataset = dataset.cast(new_features)
-        return dataset
+    if isinstance(first_label, str):
+        uniq = sorted(list(set(raw_labels)))
+    else:
+        uniq = sorted(list(set(int(v) for v in raw_labels)))
 
-    if dataset_name == "Duyacquy/Single_label_medical_abstract":
-        dataset = dataset.map(reformat_label, batched=True)
+    label2id = {lab: i for i, lab in enumerate(uniq)}
 
-    elif dataset_name == "Duyacquy/UCI_drug":
-        # convert the rating to integers
-        dataset = cast_type(dataset, label_column, "int32")
-        dataset = dataset.map(reformat_label, batched=True)
-    
+    def map_fn(example):
+        return {label_column: label2id[int(example[label_column])] if not isinstance(example[label_column], str)
+                else label2id[example[label_column]]}
+
+    dataset = dataset.map(map_fn)
+
     return dataset
 
 
