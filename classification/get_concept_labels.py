@@ -54,6 +54,8 @@ def build_sim_loaders(encode_sim):
     dataset = SimDataset(encode_sim)
     if args.concept_text_sim_model == 'angle':
         batch_size = 8
+    elif args.concept_text_sim_model == 'xlnet-base-cased':
+        batch_size = 32
     else:
         batch_size = 256
     dataloader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, num_workers=args.num_workers, shuffle=False)
