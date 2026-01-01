@@ -306,6 +306,7 @@ med_abs= [
     "aaaabbbccc16", "aaaabbbccc17", "aaaabbbccc18", "aaaabbbccc19", "aaaabbbccc20",
     "aaaabbbccc21", "aaaabbbccc22", "aaaabbbccc23", "aaaabbbccc24", "aaaabbbccc25",
     "aaaabbbccc26", "aaaabbbccc27", "aaaabbbccc28", "aaaabbbccc29", "aaaabbbccc30",
+    "changes in bowel habits (diarrhea, constipation, or both)",
     "rectal bleeding or blood in stool",
     "dark, tarry stools (melena)",
     "pale or clay-colored stools",
