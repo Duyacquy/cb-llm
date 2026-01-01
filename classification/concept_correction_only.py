@@ -16,6 +16,7 @@ args = parser.parse_args()
 
 dataset = args.dataset
 concept_set = CFG.concept_set[dataset]
+print(concept_set[:5])
 
 # --- load HF labels ---
 train_ds = load_dataset(dataset, split="train")
