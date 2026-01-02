@@ -69,6 +69,7 @@ train_dataset, test_dataset = train_val_test_split(args.dataset, CFG.dataset_con
 
 concept_set = CFG.concept_set[args.dataset]
 print(f"[INFO] num concepts = {len(concept_set)}")
+print(concept_set[:5])
 
 if args.concept_text_sim_model == 'mpnet':
     print("tokenizing and preparing mpnet")
