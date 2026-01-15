@@ -65,7 +65,7 @@ def build_sim_loaders(encode_sim):
 
 print("--------------------------------GET_CONCEPT_LABEL--------------------------------")
 print("loading data...")
-train_dataset, test_dataset = train_val_test_split(args.dataset, CFG.dataset_config[args.dataset]["label_column"], ratio=0.2, has_val=True)
+train_dataset, test_dataset = train_val_test_split(args.dataset, CFG.dataset_config[args.dataset]["label_column"], ratio=0.2, has_val=False)
 
 concept_set = CFG.concept_set[args.dataset]
 print(f"[INFO] num concepts = {len(concept_set)}")
