@@ -9,13 +9,12 @@ import config as CFG
 from dataset_utils import preprocess
 
 # ================= CONFIGURATION =================
-# Đã đổi tên nhãn đại diện thành số 1, 2, 3... theo yêu cầu của bạn
 LABEL_ORDER_CONFIG = {
     "SetFit/sst2": ["negative", "positive"],
     "Duyacquy/UCI_drug": ["1", "5", "10"],
     "Duyacquy/Pubmed_20k": ["BACKGROUND", "OBJECTIVE", "METHODS", "RESULTS", "CONCLUSIONS"],
     
-    # Đã sửa thành 1, 2, 3, 4, 5 tương ứng với thứ tự concept neoplasms -> general
+    # Label đại diện cho concept (để hiển thị trong field concept_activate)
     "Duyacquy/Single_label_medical_abstract": ["1", "2", "3", "4", "5"],
     
     "fancyzhx/ag_news": ["world", "sports", "business", "sci_tech"],
@@ -50,9 +49,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset", type=str, required=True)
     parser.add_argument("--test_npy", type=str, required=True)
-    # SỬA: Dùng save_prefix thay vì model_dir để khớp với cách lưu file
     parser.add_argument("--save_prefix", type=str, required=True, 
-                        help="Prefix đường dẫn file weight, ví dụ: .../FL (script sẽ tự thêm _W_g.pt)")
+                        help="Prefix đường dẫn file weight (không bao gồm _W_g.pt)")
     parser.add_argument("--output_json", type=str, default="concept_analysis.json")
     parser.add_argument("--top_k", type=int, default=10)
     
@@ -61,16 +59,14 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Loading data for {args.dataset}...")
 
-    # 1. Load Weights (SỬA: dùng logic cộng chuỗi thay vì os.path.join)
+    # 1. Load Weights
     try:
-        # save_prefix ví dụ là ".../FL" -> file thực là ".../FL_W_g.pt"
         W_g = torch.load(args.save_prefix + "_W_g.pt", map_location=device)
         b_g = torch.load(args.save_prefix + "_b_g.pt", map_location=device)
         train_mean = torch.load(args.save_prefix + "_train_mean.pt", map_location=device)
         train_std = torch.load(args.save_prefix + "_train_std.pt", map_location=device)
     except FileNotFoundError:
         print(f"Lỗi: Không tìm thấy file weights tại prefix: {args.save_prefix}")
-        print("Vui lòng kiểm tra lại đường dẫn '--save_prefix'.")
         return
 
     # 2. Load Concept Features
@@ -84,6 +80,8 @@ def main():
     # 4. Load Raw Text & Label
     print("Loading HF dataset...")
     ds = load_dataset(args.dataset, split="test")
+    
+    # Preprocess: bước này làm sạch data và chuyển label về dạng 0, 1, 2...
     if args.dataset in CFG.dataset_config:
         ds = preprocess(ds, args.dataset, CFG.dataset_config[args.dataset]["text_column"], CFG.dataset_config[args.dataset]["label_column"])
     
@@ -93,37 +91,39 @@ def main():
     concept_list = CFG.concept_set[args.dataset]
     representative_labels = LABEL_ORDER_CONFIG.get(args.dataset, [])
     
+    # Fallback nếu chưa config
     if not representative_labels:
         representative_labels = CFG.concepts_from_labels.get(args.dataset, [])
+    
+    # Mapping cho các dataset khác (UCI Drug, etc.) từ 0->1, 1->5, 2->10
+    idx_to_class_name = {}
+    if args.dataset in CFG.concepts_from_labels:
+         idx_to_class_name = {i: name for i, name in enumerate(CFG.concepts_from_labels[args.dataset])}
 
     final_results = []
     print("Analyzing concepts...")
     
     test_c_np = test_c.cpu().numpy()
     raw_texts = ds[text_col]
-    raw_labels = ds[label_col]
+    raw_labels = ds[label_col] # Đã bị convert thành 0, 1, 2, 3, 4
 
     min_len = min(len(raw_texts), len(test_c_np))
 
     for i in range(min_len):
         text_content = raw_texts[i]
         
-        # --- XỬ LÝ ĐỒNG BỘ LABEL VÀ PREDICT (0-4 vs 1-5) ---
-        true_label_val = raw_labels[i] # Giá trị gốc từ dataset (đã là 1-5)
-        pred_label_val = predictions[i] # Giá trị từ model (đang là 0-4)
+        true_label_idx = raw_labels[i]  # 0-based index
+        pred_label_idx = predictions[i] # 0-based index
         
-        # Riêng cho Medical Abstract, cộng 1 vào predict để khớp với label gốc 1-5
+        # --- XỬ LÝ FORMAT LABEL ---
         if args.dataset == "Duyacquy/Single_label_medical_abstract":
-            pred_label_str = str(pred_label_val + 1)
-            true_label_str = str(true_label_val) # Giữ nguyên gốc
+            # Cộng 1 cho cả True Label và Predicted Label để ra 1-5
+            pred_label_str = str(pred_label_idx + 1)
+            true_label_str = str(true_label_idx + 1)
         else:
-            # Các dataset khác giữ nguyên logic cũ hoặc map theo tên
-            # Nếu cần map tên class (vd neoplasms) thì dùng dict mapping ở đây
-            # Nhưng bạn yêu cầu output là số 1-5 nên ta để string số
-            pred_label_str = str(pred_label_val)
-            true_label_str = str(true_label_val)
-
-        # ---------------------------------------------------
+            # Các dataset khác dùng mapping từ config (VD: UCI Drug 0->"1", 1->"5"...)
+            true_label_str = idx_to_class_name.get(true_label_idx, str(true_label_idx))
+            pred_label_str = idx_to_class_name.get(pred_label_idx, str(pred_label_idx))
 
         scores = test_c_np[i]
         sorted_indices = np.argsort(scores)
@@ -162,7 +162,7 @@ def main():
     with open(args.output_json, 'w', encoding='utf-8') as f:
         json.dump(final_results, f, ensure_ascii=False, indent=4)
         
-    print(f"Done! Saved to {args.output_json}")
+    print(f"Done! Results saved to {args.output_json}")
 
 if __name__ == "__main__":
     main()
